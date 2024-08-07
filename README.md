@@ -1,56 +1,43 @@
 # Damn Vulnerable DeFi
 
-Damn Vulnerable DeFi is _the_ smart contract security playground for developers, security researchers and educators.
+## Writeups
 
-Perhaps the most sophisticated vulnerable set of Solidity smart contracts ever witnessed, it features flashloans, price oracles, governance, NFTs, DEXs, lending pools, smart contract wallets, timelocks, vaults, meta-transactions, token distributions, upgradeability and more.
+* Discussion of the solutions at the [writeups.md](writeups.md) document.
 
-Use Damn Vulnerable DeFi to:
+## Install forge
 
-- Sharpen your auditing and bug-hunting skills.
-- Learn how to detect, test and fix flaws in realistic scenarios to become a security-minded developer.
-- Benchmark smart contract security tooling.
-- Create educational content on smart contract security with articles, tutorials, talks, courses, workshops, trainings, CTFs, etc. 
+* Follow the [instructions](https://book.getfoundry.sh/getting-started/installation.html) to install [Foundry](https://github.com/foundry-rs/foundry).
 
-## Install
+## Install dependencies
 
-1. Clone the repository.
-2. Checkout the latest release (for example, `git checkout v4.0.0`)
-3. Rename the `.env.sample` file to `.env` and add a valid RPC URL. This is only needed for the challenges that fork mainnet state.
-4. Either install [Foundry](https://book.getfoundry.sh/getting-started/installation), or use the [provided devcontainer](./.devcontainer/) (In VSCode, open the repository as a devcontainer with the command "Devcontainer: Open Folder in Container...")
-5. Run `forge build` to initialize the project.
+```bash
+forge install
+```
 
-## Usage
+### Preparations
 
-Each challenge is made up of:
+Some tests may need to fork from mainnet. Create an `.env` file. You can copy the sample `.env-sample`:
 
-- A prompt located in `src/<challenge-name>/README.md`.
-- A set of contracts located in `src/<challenge-name>/`.
-- A [Foundry test](https://book.getfoundry.sh/forge/tests) located in `test/<challenge-name>/<ChallengeName>.t.sol`.
+```
+export RPC_URL=https://eth-mainnet.g.alchemy.com/v2/9yUn7YrS814EkZ-2xI0Ex0VFHcPAUmRw
+```
 
-To solve a challenge:
+## Run the entire test suit
 
-1. Read the challenge's prompt.
-2. Uncover the flaw(s) in the challenge's smart contracts.
-3. Code your solution in the corresponding test file.
-4. Try your solution with `forge test --mp test/<challenge-name>/<ChallengeName>.t.sol`.
-If the test passes, you've solved the challenge!
+```bash
+forge test
+```
 
-Challenges may have more than one possible solution.
+## Running a single challenge
 
-### Rules
+```bash
+forge test --match-contract Unstoppable
+```
 
-- You must always use the `player` account.
-- You must not modify the challenges' initial nor final conditions.
-- You can code and deploy your own smart contracts.
-- You can use Foundry's cheatcodes to advance time when necessary.
-- You can import external libraries that aren't installed, although it shouldn't be necessary.
+### Add traces
 
-## Troubleshooting
+There are different level of verbosities, `-vvvvv` is the maximum.
 
-You can ask the community for help in [the discussions section](https://github.com/theredguild/damn-vulnerable-defi/discussions).
-
-## Disclaimer
-
-All code, practices and patterns in this repository are DAMN VULNERABLE and for educational purposes only.
-
-DO NOT USE IN PRODUCTION.
+```bash
+forge test --match-contract Unstoppable -vvvvv
+```
