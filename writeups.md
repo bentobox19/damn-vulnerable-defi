@@ -3,6 +3,7 @@
 <!-- MarkdownTOC levels="1,2" autolink="true" -->
 
 - [01 Unstoppable](#01-unstoppable)
+- [02 Naive Receiver](#02-naive-receiver)
 - [Template](#template)
 
 <!-- /MarkdownTOC -->
@@ -46,13 +47,166 @@ By transfering a single `DVT` token, the values checked at the guard will be dif
 * https://ethereum.org/es/developers/docs/standards/tokens/erc-4626/
 * https://eips.ethereum.org/EIPS/eip-3156
 
-## Template
+## 02 Naive Receiver
 
-To beat this level, we need to comply with
+### Challenge
+
+> There’s a pool with 1000 WETH in balance offering flash loans. It has a fixed fee of 1 WETH. The pool supports meta-transactions by integrating with a permissionless forwarder contract.
+>
+> A user deployed a sample contract with 10 WETH in balance. Looks like it can execute flash loans of WETH.
+>
+> All funds are at risk! Rescue all WETH from the user and the pool, and deposit it into the designated recovery account.
+
+### Solution
+
+#### Draining the `receiver` contract
+
+We noticed that the pool has a significant fee:
 
 ```solidity
-
+uint256 private constant FIXED_FEE = 1e18; // not the cheapest flash loan
 ```
+
+Additionally, by inspecting the `pool.flashLoan()` function, we observed that there are no controls to prevent a user from issuing a flash loan on behalf of another.
+
+Since the receiver contract has 10 WETH, we can drain its funds with 10 flash loans.
+
+#### `pool.withdraw()` and `pool._msgSender()`
+
+We will use the `pool.withdraw()` function to retrieve the funds from the pool.
+
+We can invoke it with any receiver we choose, with the line `deposits[_msgSender()] -= amount;` serving as a safeguard.
+
+The `deployer` user owns all the funds. Therefore, if we can manipulate the `_msgSender()` function to return the deployer's address, we will be able to recover all the funds.
+
+```solidity
+function withdraw(uint256 amount, address payable receiver) external {
+    // Reduce deposits
+    deposits[_msgSender()] -= amount;
+    totalDeposits -= amount;
+
+    // Transfer ETH to designated receiver
+    weth.transfer(receiver, amount);
+}
+```
+
+The `_msgSender()` function will return the deployer's address if two conditions are met:
+
+* `msg.sender` must be the address of the `trustedForwarder`, meaning the call needs to be made using this contract.
+* The last 20 bytes of the call's payload must contain the deployer's address.
+
+```solidity
+function _msgSender() internal view override returns (address) {
+    if (msg.sender == trustedForwarder && msg.data.length >= 20) {
+        return address(bytes20(msg.data[msg.data.length - 20:]));
+    } else {
+        return super._msgSender();
+    }
+}
+```
+
+#### `BasicForwarder.execute()`
+
+`BasicForwarder` is a contract that allows you to issue meta-transactions. In essence, you **sign** some transaction data and pass it to this forwarder, which then sends it on your behalf.
+
+This works by the user filling out a struct:
+
+```solidity
+struct Request {
+    address from;
+    address target;
+    uint256 value;
+    uint256 gas;
+    uint256 nonce;
+    bytes data;
+    uint256 deadline;
+}
+```
+
+When invoking the contract with `BasicForwarder.execute()`, certain controls are executed.
+
+We are particularly interested in:
+
+```solidity
+function _checkRequest(Request calldata request, bytes calldata signature) private view {
+    // [...]
+    address signer = ECDSA.recover(_hashTypedData(getDataHash(request)), signature);
+    if (signer != request.from) revert InvalidSigner();
+}
+```
+
+and how the call is constructed and sent:
+
+```solidity
+function execute(Request calldata request, bytes calldata signature) public payable returns (bool success) {
+    // [...]
+
+    bytes memory payload = abi.encodePacked(request.data, request.from);
+
+    // [...]
+    assembly {
+        success := call(forwardGas, target, value, add(payload, 0x20), mload(payload), 0, 0) // don't copy returndata
+        gasLeft := gas()
+    }
+
+    // [...]
+}
+```
+
+In this case, while `msg.sender` will effectively become the forwarder’s address, the payload will contain the user’s address as its last 20 bytes, preventing us from spoofing the `deployer`.
+
+To complete the attack, we would need an additional layer.
+
+#### `pool.multicall()` (from `Multicall`)
+
+The `pool.multicall()` function is added to the `NaiveReceiverPool` via inheritance:
+
+```solidity
+contract NaiveReceiverPool is Multicall, IERC3156FlashLender {
+    // [...]
+}
+```
+
+This function iterates over an array of `bytes`, performing delegate calls:
+
+```solidity
+function multicall(bytes[] calldata data) external virtual returns (bytes[] memory results) {
+    results = new bytes[](data.length);
+    for (uint256 i = 0; i < data.length; i++) {
+        results[i] = Address.functionDelegateCall(address(this), data[i]);
+    }
+    return results;
+}
+```
+
+This should work to complete the attack:
+
+* Since it uses `DELEGATECALL`, invoking `multicall()` from the forwarder would keep the latter as `msg.sender`.
+* The `multicall()` function will process the payload provided by the forwarder, removing the `bytes` array from it, allowing us to attach the deployer’s address as the last 20 bytes to any element in the array.
+
+#### Putting Everything Together
+
+The attack does not require us to build a separate `Attacker` contract. The steps are as follows:
+
+* Set up the `bytes` array for `multicall()`.
+* Add 10 `flashLoan` calls to this array on behalf of the `receiver`, each borrowing 1 wei. This will drain the funds from the `receiver` contract and make them available for withdrawal.
+* Add 1 call to `withdraw()`, sending all the funds to the `recovery` address. Ensure the `deployer` address bytes are appended at the end to enable the spoofing to work.
+* Prepare the `BasicForwarder.Request` object to call the `multicall()` function with the prepared payload. This way, we can "strip" the player’s address from the payload.
+* Sign this `Request` object as the `player` to pass the controls.
+* Execute the call.
+
+### References
+
+* The X user `0xaleko` [solves and explains this challenge](https://x.com/0xaleko/status/1815150400510505024).
+* [NaiveReceiver.t.sol](https://github.com/alekoisaev/damn-vulnerable-defi/blob/v4-solutions/test/naive-receiver/NaiveReceiver.t.sol) by [@alekoisaev](https://github.com/alekoisaev).
+
+--------------------------------------------------------------------------------
+## Template
+
+### Challenge
+
+>
+
 ### Solution
 
 * ???
