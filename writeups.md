@@ -6,6 +6,7 @@
 - [02 Naive Receiver](#02-naive-receiver)
 - [03 Truster](#03-truster)
 - [04 Side Entrance](#04-side-entrance)
+- [05 The Rewarder](#05-the-rewarder)
 - [Template](#template)
 
 <!-- /MarkdownTOC -->
@@ -338,6 +339,26 @@ contract Attacker {
     }
 }
 ```
+
+## 05 The Rewarder
+
+### Challenge
+
+> A contract is distributing rewards of Damn Valuable Tokens and WETH.
+>
+> To claim rewards, users must prove they're included in the chosen set of beneficiaries. Don't worry about gas though. The contract has been optimized and allows claiming multiple tokens in the same transaction.
+>
+> Alice has claimed her rewards already. You can claim yours too! But you've realized there's a critical vulnerability in the contract.
+>
+> Save as much funds as you can from the distributor. Transfer all recovered assets to the designated recovery account.
+
+### Solution
+
+* ???
+
+### References
+
+* ???
 
 --------------------------------------------------------------------------------
 ## Template

