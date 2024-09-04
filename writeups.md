@@ -44,12 +44,6 @@ token.transfer(address(level.vault()), 1);
 
 By transfering a single `DVT` token, the values checked at the guard will be different, breaking the flash loan.
 
-### References
-
-* https://eips.ethereum.org/EIPS/eip-4626
-* https://ethereum.org/es/developers/docs/standards/tokens/erc-4626/
-* https://eips.ethereum.org/EIPS/eip-3156
-
 ## 02 Naive Receiver
 
 ### Challenge
@@ -278,10 +272,6 @@ function attack() public {
 }
 ```
 
-### References
-
-* https://eips.ethereum.org/EIPS/eip-20
-
 ## 04 Side Entrance
 
 ### Challenge
@@ -353,10 +343,6 @@ contract Attacker {
 > Save as much funds as you can from the distributor. Transfer all recovered assets to the designated recovery account.
 
 ### Solution
-
-* ???
-
-### References
 
 * ???
 
