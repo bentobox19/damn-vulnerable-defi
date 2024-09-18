@@ -1,9 +1,5 @@
 # Damn Vulnerable DeFi
 
-## Writeups
-
-* Discussion of the solutions at the [writeups.md](writeups.md) document.
-
 ## Install forge
 
 * Follow the [instructions](https://book.getfoundry.sh/getting-started/installation.html) to install [Foundry](https://github.com/foundry-rs/foundry).
