@@ -403,12 +403,4 @@ contract Attacker {
         $.lending.liquidate($.bob);
         $.lending.liquidate($.charlie);
     }
-
-    function queryBalances(string memory situation) private view {
-        console.log(situation);
-        console.log("\tETH", address(this).balance);
-        console.log("\tstETH", $.stETH.balanceOf(address(this)));
-        console.log("\tWETH", $.weth.balanceOf(address(this)));
-        console.log("\tDVT", $.dvt.balanceOf(address(this)));
-    }
 }
