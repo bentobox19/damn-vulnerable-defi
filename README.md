@@ -15,7 +15,7 @@ forge install
 Some tests may need to fork from mainnet. Create an `.env` file. You can copy the sample `.env-sample`:
 
 ```
-export RPC_URL=https://eth-mainnet.g.alchemy.com/v2/9yUn7YrS814EkZ-2xI0Ex0VFHcPAUmRw
+export MAINNET_FORKING_URL=https://eth-mainnet.g.alchemy.com/v2/9yUn7YrS814EkZ-2xI0Ex0VFHcPAUmRw
 ```
 
 ## Run the entire test suit
